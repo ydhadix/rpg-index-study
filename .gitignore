@@ -1,0 +1,14 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Generated data (kept out of git; regenerate with `make etl inflate`)
+data/*.csv
+!data/.gitkeep
+
+# Postgres volume
+pgdata/
+
+# OS
+.DS_Store

@@ -1,0 +1,43 @@
+treatment,query,label,median_ms,plan_node,shared_blocks
+T0_baseline,Q1,point lookup by name,14.228,Seq Scan,15610
+T0_baseline,Q2,range scan by level,13.461,Seq Scan,15610
+T0_baseline,Q3,two low-cardinality predicates (BitmapAnd),16.53,Seq Scan,15610
+T0_baseline,Q4,full-text body search,77.682,Seq Scan,54921
+T0_baseline,Q5,class-membership join,60.02,Seq Scan,310496
+T0_baseline,Q6,Top-N ordered browse,19.406,Seq Scan,46830
+T0_baseline,Q7,array dimension join,2.906,Seq Scan,12504
+T1_btree,Q1,point lookup by name,11.626,Seq Scan,15610
+T1_btree,Q2,range scan by level,1.263,Bitmap Heap Scan (ix_spell_level),1804
+T1_btree,Q3,two low-cardinality predicates (BitmapAnd),15.314,Seq Scan,15610
+T1_btree,Q4,full-text body search,76.397,Seq Scan,54921
+T1_btree,Q5,class-membership join,61.779,Seq Scan,310496
+T1_btree,Q6,Top-N ordered browse,1.546,Index Scan (ix_spell_level),5961
+T1_btree,Q7,array dimension join,2.9,Seq Scan,12504
+T2_hash,Q1,point lookup by name,0.004,Index Scan (ix_spell_name_hash),2
+T2_hash,Q2,range scan by level,1.252,Bitmap Heap Scan (ix_spell_level),1804
+T2_hash,Q3,two low-cardinality predicates (BitmapAnd),16.567,Seq Scan,15610
+T2_hash,Q4,full-text body search,75.789,Seq Scan,54921
+T2_hash,Q5,class-membership join,59.676,Seq Scan,310496
+T2_hash,Q6,Top-N ordered browse,1.545,Index Scan (ix_spell_level),5961
+T2_hash,Q7,array dimension join,2.851,Seq Scan,12504
+T3_gin,Q1,point lookup by name,0.004,Index Scan (ix_spell_name_hash),2
+T3_gin,Q2,range scan by level,1.256,Bitmap Heap Scan (ix_spell_level),1804
+T3_gin,Q3,two low-cardinality predicates (BitmapAnd),18.54,Seq Scan,15610
+T3_gin,Q4,full-text body search,3.771,Bitmap Heap Scan (ix_spell_body_gin),7622
+T3_gin,Q5,class-membership join,57.703,Seq Scan,310496
+T3_gin,Q6,Top-N ordered browse,1.677,Index Scan (ix_spell_level),5961
+T3_gin,Q7,array dimension join,3.31,Seq Scan,12504
+T4_bitmap,Q1,point lookup by name,0.004,Index Scan (ix_spell_name_hash),2
+T4_bitmap,Q2,range scan by level,1.256,Bitmap Heap Scan (ix_spell_level),1804
+T4_bitmap,Q3,two low-cardinality predicates (BitmapAnd),2.612,BitmapAnd (ix_spell_school+ix_spell_conc),2670
+T4_bitmap,Q4,full-text body search,3.753,Bitmap Heap Scan (ix_spell_body_gin),7622
+T4_bitmap,Q5,class-membership join,58.966,Seq Scan,310496
+T4_bitmap,Q6,Top-N ordered browse,1.556,Index Scan (ix_spell_level),5961
+T4_bitmap,Q7,array dimension join,2.78,Seq Scan,12504
+T5_join,Q1,point lookup by name,0.003,Index Scan (ix_spell_name_hash),2
+T5_join,Q2,range scan by level,1.218,Bitmap Heap Scan (ix_spell_level),1804
+T5_join,Q3,two low-cardinality predicates (BitmapAnd),2.59,BitmapAnd (ix_spell_school+ix_spell_conc),2670
+T5_join,Q4,full-text body search,3.723,Bitmap Heap Scan (ix_spell_body_gin),7622
+T5_join,Q5,class-membership join,47.641,Bitmap Heap Scan (ix_spellclass_class),311290
+T5_join,Q6,Top-N ordered browse,1.565,Index Scan (ix_spell_level),5961
+T5_join,Q7,array dimension join,1.846,Bitmap Heap Scan (ix_spelldamage_type),18460

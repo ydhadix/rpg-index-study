@@ -1,0 +1,22 @@
+# PostgreSQL 16 for the indexing study. No system install needed: `make up`.
+# Doubles as documentation of the engine + version used in the evaluation.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: rpg-index-db
+    environment:
+      POSTGRES_USER: rpg
+      POSTGRES_PASSWORD: rpg
+      POSTGRES_DB: rpg
+    ports:
+      - "5544:5432"          # host 5544 -> container 5432 (avoids clashing with a local pg)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpg -d rpg"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

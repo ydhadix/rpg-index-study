@@ -1,0 +1,3 @@
+state,lookups,total_s,avg_ms,qps
+baseline (seq scan),1000,9.6393,9.6393,103.7
+hash index,1000,0.1496,0.1496,6685.2
