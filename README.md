@@ -28,7 +28,7 @@ _To be determined..._
 
 | | |
 |---|---|
-| **Source** | [5etools](https://5e.tools) open D&D 5e data set (`../5etools-src/data/spells/`) |
+| **Source** | [5etools](https://5e.tools) open D&D 5e data set — repo: [5etools-mirror-3/5etools-src](https://github.com/5etools-mirror-3/5etools-src), spells under `data/spells/` |
 | **Format** | structured JSON, one file per source book (`spells-*.json`) |
 | **Raw records** | 936 spell printings across 17 source books |
 | **Canonical spells** | **557** after de-duplicating reprints (one row per spell name) |
@@ -103,12 +103,26 @@ Clone and run with: `make setup && make up && make all`.
 
 Requires Docker (for PostgreSQL 16) and Python 3.12+.
 
+**Dataset dependency.** The ETL step reads the 5etools spell JSON, which is *not* bundled
+with this repo. Clone the dataset and place it as a sibling of this project (so the data
+lives at `../5etools-src/data/`), or point the ETL elsewhere with the `FIVET_DATA` env var:
+
+```bash
+# from this project's parent directory:
+git clone https://github.com/5etools-mirror-3/5etools-src.git
+#   -> data is then at ../5etools-src/data/spells/   (the default the ETL looks for)
+#   or, if the checkout lives somewhere else:
+export FIVET_DATA=/path/to/5etools-src/data
+```
+
+Then build and run:
+
 ```bash
 make setup        # create venv + install psycopg, tabulate, matplotlib
 make up           # start PostgreSQL 16 in Docker, wait until ready
 make all          # etl -> load -> inflate (100K) -> bench
 #   or step by step:
-make etl          # parse 5etools JSON -> data/*.csv
+make etl          # parse 5etools JSON (../5etools-src/data) -> data/*.csv
 make load         # create schema + load the 557 real spells
 make inflate ROWS=100000
 make bench        # run the treatment x query matrix + throughput test
