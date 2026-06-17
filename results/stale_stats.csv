@@ -1,3 +1,3 @@
 when,plan_node,est_rows,actual_rows,est_error_x
-"after burst, stale stats",Bitmap Index Scan,9147,68592,7.5
-after ANALYZE (fresh stats),Bitmap Index Scan,68912,68592,1.0
+"after burst, stale stats",Index Scan,8869,68380,7.7
+after ANALYZE (fresh stats),Index Scan,67472,68380,1.0

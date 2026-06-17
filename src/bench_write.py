@@ -30,6 +30,7 @@ Outputs:
 Run:  python src/bench_write.py        (after `make load inflate`)
 """
 from __future__ import annotations
+import argparse
 import csv
 import statistics
 import time
@@ -91,8 +92,9 @@ def bulk_insert(cur, base_id: int, n: int, source: str, level_sql: str) -> None:
 # --------------------------------------------------------------------------- #
 # B1  write / read trade-off
 # --------------------------------------------------------------------------- #
-def b1_write_tradeoff(n_insert: int = 50000) -> list[dict]:
-    print(f"\n== B1: INSERT throughput vs index count ({n_insert:,} rows/stage) ==")
+def b1_write_tradeoff(n_insert: int = 50000, trials: int = 5) -> list[dict]:
+    print(f"\n== B1: INSERT throughput vs index count "
+          f"({n_insert:,} rows/stage, median of {trials}) ==")
     out: list[dict] = []
     with connect(autocommit=False) as conn, conn.cursor() as cur:
         base_id = base_template_id(cur)
@@ -104,20 +106,23 @@ def b1_write_tradeoff(n_insert: int = 50000) -> list[dict]:
             applied += stmts
             conn.commit()
 
-            t0 = time.perf_counter()
-            bulk_insert(cur, base_id, n_insert, "WRITE_TEST", "(g %% 10)::smallint")
-            conn.commit()
-            elapsed = time.perf_counter() - t0
+            # repeat the insert+reset cycle so the reported rate is a median, not a single
+            # noisy timing -- index maintenance below the GIN step is small enough that one
+            # un-replicated run can order the cheap stages arbitrarily.
+            rates: list[float] = []
+            for _ in range(trials):
+                t0 = time.perf_counter()
+                bulk_insert(cur, base_id, n_insert, "WRITE_TEST", "(g %% 10)::smallint")
+                conn.commit()
+                rates.append(n_insert / (time.perf_counter() - t0))
+                cur.execute("DELETE FROM spell WHERE source = 'WRITE_TEST'")
+                conn.commit()
+            rps = statistics.median(rates)
 
             out.append({"stage": label, "n_indexes": len(applied), "rows": n_insert,
-                        "total_s": round(elapsed, 3),
-                        "rows_per_sec": round(n_insert / elapsed, 1),
-                        "us_per_row": round(elapsed / n_insert * 1e6, 2)})
-            print(f"  {label:<18} {n_insert/elapsed:9.1f} rows/s  "
-                  f"({elapsed/n_insert*1e6:7.2f} us/row)")
-
-            cur.execute("DELETE FROM spell WHERE source = 'WRITE_TEST'")
-            conn.commit()
+                        "rows_per_sec": round(rps, 1),
+                        "us_per_row": round(1e6 / rps, 2)})
+            print(f"  {label:<18} {rps:9.1f} rows/s  ({1e6/rps:7.2f} us/row)")
         drop_secondary(cur); conn.commit()
 
     base = out[0]["rows_per_sec"]
@@ -299,8 +304,69 @@ conservatively, and schedule `ANALYZE`/`VACUUM` to keep statistics fresh and blo
     (RESULTS / "realtime.md").write_text(md)
 
 
+def chart_write_tradeoff(b1: list[dict]) -> None:
+    """Write throughput vs index count. A line chart, so the y-axis is zoomed to the data
+    range (not anchored at 0) -- the interesting variation is a few hundred rows/sec and
+    would be invisible squashed against the top of a 0-based axis."""
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    labels = [r["stage"] for r in b1]
+    rps = [r["rows_per_sec"] for r in b1]
+    ax.plot(range(len(labels)), rps, "o-", color="#c0504d")
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=20, ha="right", fontsize=8)
+    ax.set_ylabel("INSERT throughput (rows/sec)")
+
+    lo, hi = min(rps), max(rps)
+    pad = (hi - lo) * 0.25 if hi > lo else hi * 0.02
+    ax.set_ylim(lo - pad, hi + pad * 1.8)        # extra top headroom for the value labels
+    ax.margins(x=0.08)
+
+    ax.set_title("The write tax of indexing: throughput falls as indexes are added")
+    for i, v in enumerate(rps):
+        ax.text(i, v, f"{v:,.0f}", ha="center", va="bottom", fontsize=8)
+    fig.tight_layout(); fig.savefig(RESULTS / "write_tradeoff.png", dpi=120); plt.close(fig)
+
+
+def chart_bloat(b2: list[dict]) -> None:
+    """Table size (bars) + full-scan time (line) across clean / bloated / vacuumed."""
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    states = [r["state"] for r in b2]
+    sizes = [r["size_mb"] for r in b2]
+    scans = [r["scan_ms"] for r in b2]
+    x = range(len(states))
+    ax.bar(x, sizes, color="#4f81bd", label="table size (MB)")
+    ax.set_xticks(list(x)); ax.set_xticklabels(states, fontsize=8)
+    ax.set_ylabel("table size (MB)")
+    ax2 = ax.twinx()
+    ax2.plot(x, scans, "o-", color="#c0504d", label="full-scan ms")
+    ax2.set_ylabel("full-scan time (ms)", color="#c0504d")
+    ax.set_title("MVCC bloat from real-time edits, reclaimed by VACUUM")
+    fig.tight_layout(); fig.savefig(RESULTS / "bloat.png", dpi=120); plt.close(fig)
+
+
+def _read_csv(name: str) -> list[dict]:
+    def num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return v
+    with open(RESULTS / name) as fh:
+        return [{k: num(v) for k, v in row.items()} for row in csv.DictReader(fh)]
+
+
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--charts-only", action="store_true",
+                    help="rebuild charts from the existing results CSVs (no DB work)")
+    args = ap.parse_args()
     RESULTS.mkdir(exist_ok=True)
+
+    if args.charts_only:
+        chart_write_tradeoff(_read_csv("write_tradeoff.csv"))
+        chart_bloat(_read_csv("bloat.csv"))
+        print("rebuilt write_tradeoff.png, bloat.png from existing CSVs")
+        return 0
+
     b1 = b1_write_tradeoff()
     b2 = b2_bloat()
     b3 = b3_stale_stats()
@@ -314,33 +380,8 @@ def main() -> int:
     with open(RESULTS / "stale_stats.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(b3[0].keys())); w.writeheader(); w.writerows(b3)
 
-    # chart 1: write throughput vs index count
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    labels = [r["stage"] for r in b1]; rps = [r["rows_per_sec"] for r in b1]
-    ax.plot(range(len(labels)), rps, "o-", color="#c0504d")
-    ax.set_xticks(range(len(labels))); ax.set_xticklabels(labels, rotation=20, ha="right",
-                                                          fontsize=8)
-    ax.set_ylabel("INSERT throughput (rows/sec)")
-    ax.set_ylim(bottom=0)
-    ax.set_title("The write tax of indexing: throughput falls as indexes are added")
-    for i, v in enumerate(rps):
-        ax.text(i, v, f"{v:,.0f}", ha="center", va="bottom", fontsize=8)
-    fig.tight_layout(); fig.savefig(RESULTS / "write_tradeoff.png", dpi=120); plt.close(fig)
-
-    # chart 2: bloat (size + scan time) clean / bloated / vacuumed
-    fig, ax = plt.subplots(figsize=(7, 4.5))
-    states = [r["state"] for r in b2]; sizes = [r["size_mb"] for r in b2]
-    scans = [r["scan_ms"] for r in b2]
-    x = range(len(states))
-    ax.bar(x, sizes, color="#4f81bd", label="table size (MB)")
-    ax.set_xticks(list(x)); ax.set_xticklabels(states, fontsize=8)
-    ax.set_ylabel("table size (MB)")
-    ax2 = ax.twinx()
-    ax2.plot(x, scans, "o-", color="#c0504d", label="full-scan ms")
-    ax2.set_ylabel("full-scan time (ms)", color="#c0504d")
-    ax.set_title("MVCC bloat from real-time edits, reclaimed by VACUUM")
-    fig.tight_layout(); fig.savefig(RESULTS / "bloat.png", dpi=120); plt.close(fig)
-
+    chart_write_tradeoff(b1)
+    chart_bloat(b2)
     write_report(b1, b2, b3)
     print(f"\nwrote {RESULTS/'realtime.md'}, write_tradeoff.{{csv,png}}, bloat.{{csv,png}}, "
           f"stale_stats.csv")

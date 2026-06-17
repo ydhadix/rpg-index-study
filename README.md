@@ -58,11 +58,11 @@ _ASCII Graph Generated with Claude Sonnet 4.6_
             └────────────────────────────┘      │ 10K / 100K / 1M rows           │
                             ▲                   └───────────────┬────────────────┘
         sql/treatments.sql  │                                   ▼
-        (T0->T5 index sets)  │      ┌────────────────────────────────────────────────────┐
+        (T0->T5 index sets) │      ┌────────────────────────────────────────────────────┐
                             └─────▶│  READ framework         │  REAL-TIME framework     │
                                    │  bench.py               │  bench_write.py          │
                                    │  • treatment×query      │  • B1 write tax vs #idx  │
-                                   │    EXPLAIN(ANALYZE,     │  • B2 MVCC bloat->VACUUM  │
+                                   │    EXPLAIN(ANALYZE,     │  • B2 MVCC bloat->VACUUM │
                                    │    BUFFERS) matrix      │  • B3 stale statistics   │
                                    │  • hot-path p50/p95/p99 │                          │
                                    │  • index build+size     │  bench_scale.py          │
