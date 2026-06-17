@@ -185,41 +185,94 @@ def run_matrix(cur) -> list[dict]:
     return rows
 
 
+def _pct(sorted_ms: list[float], p: float) -> float:
+    """Nearest-rank percentile of an already-sorted list of per-call latencies (ms)."""
+    if not sorted_ms:
+        return 0.0
+    k = max(0, min(len(sorted_ms) - 1, int(round(p / 100 * len(sorted_ms))) - 1))
+    return sorted_ms[k]
+
+
 def run_throughput(cur) -> list[dict]:
-    """Fire THROUGHPUT_N point lookups back-to-back, baseline vs hash-indexed."""
+    """Fire THROUGHPUT_N point lookups back-to-back, baseline vs hash-indexed.
+
+    Reports mean throughput AND the per-lookup latency distribution (p50/p95/p99/max):
+    for an interactive agent the *tail* bounds responsiveness, not the average.
+    """
     cur.execute("SELECT name FROM spell ORDER BY random() LIMIT %s", (THROUGHPUT_N,))
     keys = [r[0] for r in cur.fetchall()]
 
-    def measure() -> tuple[float, float]:
+    def measure() -> tuple[float, list[float]]:
         # warm + prepared (psycopg auto-prepares after a few executions)
         for k in keys[:10]:
             cur.execute(THROUGHPUT_SQL, (k,)); cur.fetchall()
+        per_call: list[float] = []
         t0 = time.perf_counter()
         for k in keys:
+            c0 = time.perf_counter()
             cur.execute(THROUGHPUT_SQL, (k,)); cur.fetchall()
+            per_call.append((time.perf_counter() - c0) * 1000.0)
         elapsed = time.perf_counter() - t0
-        return elapsed, len(keys) / elapsed
+        return elapsed, per_call
+
+    def row(state: str, elapsed: float, per_call: list[float]) -> dict:
+        s = sorted(per_call)
+        return {
+            "state": state, "lookups": THROUGHPUT_N,
+            "total_s": round(elapsed, 4),
+            "avg_ms": round(elapsed / THROUGHPUT_N * 1000, 4),
+            "qps": round(THROUGHPUT_N / elapsed, 1),
+            "p50_ms": round(_pct(s, 50), 4),
+            "p95_ms": round(_pct(s, 95), 4),
+            "p99_ms": round(_pct(s, 99), 4),
+            "max_ms": round(s[-1], 4),
+        }
 
     drop_secondary_indexes(cur)
     cur.execute("ANALYZE spell")
-    base_elapsed, base_qps = measure()
+    base_elapsed, base_calls = measure()
 
     cur.execute("CREATE INDEX IF NOT EXISTS ix_spell_name_hash ON spell USING hash (name)")
     cur.execute("ANALYZE spell")
-    idx_elapsed, idx_qps = measure()
+    idx_elapsed, idx_calls = measure()
 
-    out = [
-        {"state": "baseline (seq scan)", "lookups": THROUGHPUT_N,
-         "total_s": round(base_elapsed, 4), "avg_ms": round(base_elapsed / THROUGHPUT_N * 1000, 4),
-         "qps": round(base_qps, 1)},
-        {"state": "hash index", "lookups": THROUGHPUT_N,
-         "total_s": round(idx_elapsed, 4), "avg_ms": round(idx_elapsed / THROUGHPUT_N * 1000, 4),
-         "qps": round(idx_qps, 1)},
-    ]
+    out = [row("baseline (seq scan)", base_elapsed, base_calls),
+           row("hash index", idx_elapsed, idx_calls)]
     print(f"\n== throughput ({THROUGHPUT_N} point lookups) ==")
-    print(f"  baseline : {base_qps:9.1f} q/s  ({base_elapsed/THROUGHPUT_N*1000:.4f} ms/lookup)")
-    print(f"  hash idx : {idx_qps:9.1f} q/s  ({idx_elapsed/THROUGHPUT_N*1000:.4f} ms/lookup)")
-    print(f"  speedup  : {idx_qps/base_qps:.1f}x")
+    for r in out:
+        print(f"  {r['state']:<20} {r['qps']:9.1f} q/s  "
+              f"p50={r['p50_ms']:.4f} p95={r['p95_ms']:.4f} p99={r['p99_ms']:.4f} "
+              f"max={r['max_ms']:.4f} ms")
+    print(f"  speedup  : {out[1]['qps']/out[0]['qps']:.1f}x")
+    return out
+
+
+def run_index_cost(cur) -> list[dict]:
+    """The other half of 'performance': what each index COSTS to build and store.
+
+    From the fully-inflated table, drop all secondary indexes, then build each one
+    defined in treatments.sql, timing the CREATE INDEX and recording its on-disk size.
+    """
+    idx_defs: list[tuple[str, str]] = []   # (index_name, create_sql)
+    for _, _, stmts in parse_treatments():
+        for s in stmts:
+            m = re.search(r"CREATE INDEX(?: IF NOT EXISTS)?\s+(\S+)", s, re.I)
+            if m:
+                idx_defs.append((m.group(1), s))
+
+    drop_secondary_indexes(cur)
+    out: list[dict] = []
+    print(f"\n== index build cost ({len(idx_defs)} indexes) ==")
+    for name, sql in idx_defs:
+        cur.execute(f"DROP INDEX IF EXISTS {name}")
+        t0 = time.perf_counter()
+        cur.execute(sql)
+        build_ms = (time.perf_counter() - t0) * 1000.0
+        cur.execute("SELECT pg_relation_size(%s)", (name,))
+        size_bytes = cur.fetchone()[0]
+        out.append({"index": name, "build_ms": round(build_ms, 1),
+                    "size_mb": round(size_bytes / 1024 / 1024, 2)})
+        print(f"  {name:<22} build {build_ms:8.1f} ms   size {size_bytes/1024/1024:6.2f} MB")
     return out
 
 
@@ -233,7 +286,8 @@ def write_csv(path: Path, rows: list[dict]) -> None:
         w.writerows(rows)
 
 
-def build_report(matrix: list[dict], throughput: list[dict]) -> None:
+def build_report(matrix: list[dict], throughput: list[dict],
+                 index_cost: list[dict] | None = None) -> None:
     treatments = []
     for r in matrix:
         if r["treatment"] not in treatments:
@@ -261,8 +315,26 @@ def build_report(matrix: list[dict], throughput: list[dict]) -> None:
     lat_table = tabulate(lat_rows, headers=lat_header, tablefmt="github")
     node_table = tabulate(node_rows, headers=["query"] + treatments, tablefmt="github")
     tput_table = tabulate(
-        [[r["state"], r["lookups"], r["total_s"], r["avg_ms"], r["qps"]] for r in throughput],
-        headers=["state", "lookups", "total_s", "avg_ms", "queries/sec"], tablefmt="github")
+        [[r["state"], r["lookups"], r["qps"], r["avg_ms"],
+          r.get("p50_ms", ""), r.get("p95_ms", ""), r.get("p99_ms", ""), r.get("max_ms", "")]
+         for r in throughput],
+        headers=["state", "lookups", "queries/sec", "avg_ms",
+                 "p50_ms", "p95_ms", "p99_ms", "max_ms"], tablefmt="github")
+
+    cost_section = ""
+    if index_cost:
+        cost_table = tabulate(
+            [[r["index"], r["build_ms"], r["size_mb"]] for r in index_cost],
+            headers=["index", "build_ms", "size_mb"], tablefmt="github")
+        total_mb = sum(r["size_mb"] for r in index_cost)
+        cost_section = f"""
+## Cost of indexing: build time + on-disk size (100K spells)
+
+Indexes are not free: each one is built once and then stored and maintained. Total
+secondary-index footprint here is **{total_mb:.1f} MB** on top of the base table.
+
+{cost_table}
+"""
 
     speedup = throughput[1]["qps"] / throughput[0]["qps"] if throughput[0]["qps"] else 0
     md = f"""# Benchmark results
@@ -281,10 +353,13 @@ Treatments are applied cumulatively (T0 = primary keys only).
 
 ## Agent-style throughput: {THROUGHPUT_N} point lookups (the hot path)
 
+Mean throughput plus the per-lookup latency distribution. The tail (p95/p99) is what
+bounds how responsive an interactive agent feels when it fans out many lookups per turn.
+
 {tput_table}
 
 **Indexing the hot point-lookup path gave a {speedup:.1f}x throughput improvement.**
-"""
+{cost_section}"""
     (RESULTS / "summary.md").write_text(md)
 
     # ---- charts ----
@@ -327,14 +402,25 @@ def main() -> int:
     args = ap.parse_args()
     RESULTS.mkdir(exist_ok=True)
 
+    def _num(d: dict) -> dict:
+        """Cast every value that looks numeric to float (keeps string columns intact)."""
+        out = {}
+        for k, v in d.items():
+            try:
+                out[k] = float(v)
+            except (TypeError, ValueError):
+                out[k] = v
+        return out
+
     if args.report_only:
         matrix = [dict(r, median_ms=float(r["median_ms"]),
                        shared_blocks=int(r["shared_blocks"]))
                   for r in csv.DictReader(open(RESULTS / "results.csv"))]
-        throughput = [dict(r, lookups=int(r["lookups"]), total_s=float(r["total_s"]),
-                           avg_ms=float(r["avg_ms"]), qps=float(r["qps"]))
-                      for r in csv.DictReader(open(RESULTS / "throughput.csv"))]
-        build_report(matrix, throughput)
+        throughput = [_num(r) for r in csv.DictReader(open(RESULTS / "throughput.csv"))]
+        cost_path = RESULTS / "index_cost.csv"
+        index_cost = ([_num(r) for r in csv.DictReader(open(cost_path))]
+                      if cost_path.exists() else None)
+        build_report(matrix, throughput, index_cost)
         return 0
 
     with connect(autocommit=True) as conn, conn.cursor() as cur:
@@ -343,10 +429,12 @@ def main() -> int:
         print(f"benchmarking against {cur.fetchone()[0]:,} spells")
         matrix = run_matrix(cur)
         throughput = run_throughput(cur)
+        index_cost = run_index_cost(cur)
 
     write_csv(RESULTS / "results.csv", matrix)
     write_csv(RESULTS / "throughput.csv", throughput)
-    build_report(matrix, throughput)
+    write_csv(RESULTS / "index_cost.csv", index_cost)
+    build_report(matrix, throughput, index_cost)
     return 0
 
 

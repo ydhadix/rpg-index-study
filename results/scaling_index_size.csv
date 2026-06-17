@@ -1,0 +1,10 @@
+rows,index,size_mb
+10000,ix_spell_level,0.09
+10000,ix_spell_name_hash,0.52
+10000,ix_spell_body_gin,1.29
+100000,ix_spell_level,0.68
+100000,ix_spell_name_hash,4.02
+100000,ix_spell_body_gin,9.52
+1000000,ix_spell_level,6.64
+1000000,ix_spell_name_hash,32.02
+1000000,ix_spell_body_gin,117.3

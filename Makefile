@@ -7,7 +7,7 @@ PY ?= .venv/bin/python
 ROWS ?= 100000
 export DATABASE_URL ?= postgresql://rpg:rpg@localhost:5544/rpg
 
-.PHONY: help setup up down wait etl load inflate bench report all clean nuke psql
+.PHONY: help setup up down wait etl load inflate bench bench-scale bench-write report all clean nuke psql
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -39,8 +39,14 @@ load: ## Create schema and load the base (canonical) spells
 inflate: ## Synthetically grow to ROWS spells (default 100000)
 	$(PY) src/inflate.py --rows $(ROWS)
 
-bench: ## Run the workload across all index treatments + throughput test
+bench: ## Run the read workload across all treatments + throughput + index-cost
 	$(PY) src/bench.py
+
+bench-scale: ## Scaling study: latency vs table size (re-inflates; SIZES overrides)
+	$(PY) src/bench_scale.py $(if $(SIZES),--sizes $(SIZES),)
+
+bench-write: ## Real-time study: write tax + concurrency + stale statistics
+	$(PY) src/bench_write.py
 
 report: ## (Re)build charts from the latest results CSVs
 	$(PY) src/bench.py --report-only

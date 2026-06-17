@@ -1,0 +1,4 @@
+state,size_mb,scan_ms,dead_tuples
+clean (after VACUUM FULL),148.7,17.114,
+bloated (6 updates),863.8,93.644,601234
+after VACUUM FULL,145.59,17.096,

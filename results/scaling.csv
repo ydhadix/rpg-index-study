@@ -1,0 +1,25 @@
+rows,query,state,median_ms,plan_node
+10000,Q1,no_index,4.436,Seq Scan
+10000,Q2,no_index,4.042,Seq Scan
+10000,Q4,no_index,11.49,Seq Scan
+10000,Q6,no_index,5.141,Seq Scan
+10000,Q1,indexed,0.004,Index Scan (ix_spell_name_hash)
+10000,Q2,indexed,0.121,Index Scan (ix_spell_level)
+10000,Q4,indexed,0.234,Bitmap Heap Scan (ix_spell_body_gin)
+10000,Q6,indexed,0.193,Index Scan (ix_spell_level)
+100000,Q1,no_index,25.948,Seq Scan
+100000,Q2,no_index,26.547,Seq Scan
+100000,Q4,no_index,85.314,Seq Scan
+100000,Q6,no_index,34.371,Seq Scan
+100000,Q1,indexed,0.004,Index Scan (ix_spell_name_hash)
+100000,Q2,indexed,1.15,Index Scan (ix_spell_level)
+100000,Q4,indexed,2.003,Bitmap Heap Scan (ix_spell_body_gin)
+100000,Q6,indexed,1.546,Index Scan (ix_spell_level)
+1000000,Q1,no_index,190.933,Seq Scan
+1000000,Q2,no_index,187.404,Seq Scan
+1000000,Q4,no_index,842.239,Seq Scan
+1000000,Q6,no_index,272.025,Seq Scan
+1000000,Q1,indexed,0.005,Index Scan (ix_spell_name_hash)
+1000000,Q2,indexed,87.359,Bitmap Heap Scan (ix_spell_level)
+1000000,Q4,indexed,413.876,Bitmap Heap Scan (ix_spell_body_gin)
+1000000,Q6,indexed,82.431,Index Scan (ix_spell_level)
